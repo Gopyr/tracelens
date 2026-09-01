@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>TraceLens — Local Traces</title>
+<style>
+  :root { --bg:#0a0f1f; --card:#111827; --border:#1f2a44; --text:#e5e7eb; --muted:#9ca3af; --accent:#2dd4bf; --red:#f87171; --yellow:#fbbf24; --green:#34d399; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--bg); color:var(--text); min-height:100vh; }
+  header { padding:20px 24px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+  h1 { font-size:18px; letter-spacing:-0.02em; }
+  h1 span { color:var(--accent); }
+  .subtitle { color:var(--muted); font-size:12px; margin-top:4px; }
+  .meta { display:flex; gap:12px; align-items:center; font-size:12px; color:var(--muted); }
+  .pill { background:var(--card); border:1px solid var(--border); padding:4px 10px; border-radius:999px; }
+  .controls { padding:16px 24px; display:flex; gap:10px; flex-wrap:wrap; align-items:center; border-bottom:1px solid var(--border); background:#0d1328; }
+  input, select, button { background:var(--card); color:var(--text); border:1px solid var(--border); padding:8px 10px; border-radius:8px; font:inherit; font-size:13px; }
+  button { cursor:pointer; background:var(--accent); color:#04201c; border-color:transparent; font-weight:600; }
+  button.secondary { background:transparent; color:var(--text); border-color:var(--border); }
+  button:hover { opacity:0.9; }
+  .stats { display:grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap:12px; padding:16px 24px; }
+  .stat { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:14px; }
+  .stat-label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; }
+  .stat-value { font-size:20px; font-weight:700; margin-top:4px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; padding:10px 12px; border-bottom:1px solid var(--border); background:#0d1328; position:sticky; top:0; }
+  td { padding:9px 12px; border-bottom:1px solid #111a2f; }
+  tr:hover td { background:#0f1a33; }
+  .table-wrap { overflow:auto; max-height:60vh; margin:0 24px 24px; border:1px solid var(--border); border-radius:12px; }
+  .method { font-weight:700; font-size:11px; padding:2px 6px; border-radius:6px; background:#1f2a44; }
+  .method.GET { background:#0e3a2e; color:#6ee7b7; }
+  .method.POST { background:#1e3a5f; color:#93c5fd; }
+  .method.DELETE { background:#4a1a1a; color:#fca5a5; }
+  .status { font-weight:700; padding:2px 7px; border-radius:999px; font-size:12px; }
+  .status.ok { background:#052e1a; color:var(--green); }
+  .status.warn { background:#3a2e0a; color:var(--yellow); }
+  .status.err { background:#3a1212; color:var(--red); }
+  .latency { font-variant-numeric: tabular-nums; }
+  .latency.fast { color:var(--green); }
+  .latency.slow { color:var(--yellow); }
+  .latency.very-slow { color:var(--red); }
+  footer { padding:16px 24px; color:var(--muted); font-size:11px; border-top:1px solid var(--border); }
+  a { color:var(--accent); text-decoration:none; }
+  .empty { padding:40px; text-align:center; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1><span>◉</span> TraceLens</h1>
+    <div class="subtitle">Local observability proxy — latency · status · traces · single-process only</div>
+  </div>
+  <div class="meta">
+    <span class="pill" id="target">target: —</span>
+    <span class="pill" id="storage">storage: —</span>
+    <span class="pill" id="count">0 traces</span>
+  </div>
+</header>
+
+<div class="controls">
+  <input id="filter" placeholder="Filter path (e.g. /api)" style="min-width:200px" />
+  <select id="methodFilter"><option value="">All methods</option><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option><option>PATCH</option></select>
+  <select id="statusFilter"><option value="">All status</option><option value="2">2xx</option><option value="3">3xx</option><option value="4">4xx</option><option value="5">5xx</option></select>
+  <button id="refresh">Refresh</button>
+  <button class="secondary" id="liveBtn">Live: OFF</button>
+  <button class="secondary" id="clearBtn">Clear filter</button>
+  <span style="margin-left:auto; font-size:12px; color:var(--muted)">Auto-refresh <span id="autoLabel">off</span> · <a href="/__tracelens/traces" target="_blank">JSON API</a> · <a href="/__tracelens/stats" target="_blank">Stats</a></span>
+</div>
+
+<div class="stats" id="stats">
+  <div class="stat"><div class="stat-label">Total traces</div><div class="stat-value" id="s-count">—</div></div>
+  <div class="stat"><div class="stat-label">Avg latency</div><div class="stat-value" id="s-avg">—</div></div>
+  <div class="stat"><div class="stat-label">p95 latency</div><div class="stat-value" id="s-p95">—</div></div>
+  <div class="stat"><div class="stat-label">2xx / 4xx / 5xx</div><div class="stat-value" id="s-codes" style="font-size:14px">—</div></div>
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Time</th><th>Method</th><th>Path</th><th>Status</th><th>Latency</th></tr></thead>
+  <tbody id="tbody"><tr><td colspan="5" class="empty">Loading traces…</td></tr></tbody>
+</table>
+</div>
+
+<footer>
+  TraceLens is <strong>local-only</strong> — single-process proxy with SQLite/JSONL storage. No distributed tracing, no sampling, no clustering. For local dev observability only. &nbsp;|&nbsp; <a href="https://github.com/Gopyr/tracelens">GitHub</a>
+</footer>
+
+<script>
+const tbody = document.getElementById('tbody');
+const filter = document.getElementById('filter');
+const methodFilter = document.getElementById('methodFilter');
+const statusFilter = document.getElementById('statusFilter');
+let live = false, timer = null;
+let allTraces = [];
+
+function latencyClass(ms) {
+  if (ms < 100) return 'fast';
+  if (ms < 500) return 'slow';
+  return 'very-slow';
+}
+function statusClass(s) {
+  if (s >= 200 && s < 300) return 'ok';
+  if (s >= 300 && s < 400) return 'warn';
+  if (s >= 400) return 'err';
+  return 'warn';
+}
+
+function render() {
+  const q = filter.value.toLowerCase();
+  const m = methodFilter.value;
+  const sc = statusFilter.value;
+  let traces = allTraces;
+  if (q) traces = traces.filter(t => t.path.toLowerCase().includes(q));
+  if (m) traces = traces.filter(t => t.method === m);
+  if (sc) traces = traces.filter(t => String(t.status).startsWith(sc));
+  if (!traces.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty">${allTraces.length ? 'No traces match filters.' : 'No traces yet — send traffic through the proxy.'}<br><small style="color:#6b7280">Proxy: make requests to http://localhost:3888 (or $PORT)</small></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = traces.map(t => {
+    const d = new Date(t.timestamp);
+    const time = d.toLocaleTimeString() + '.' + String(d.getMilliseconds()).padStart(3,'0');
+    return `<tr>
+      <td style="color:#9ca3af; white-space:nowrap; font-size:12px">${time}</td>
+      <td><span class="method ${t.method}">${t.method}</span></td>
+      <td style="max-width:420px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap" title="${t.path}">${t.path}${t.error ? ` <span style="color:#f87171">(${t.error})</span>` : ''}</td>
+      <td><span class="status ${statusClass(t.status)}">${t.status}</span></td>
+      <td class="latency ${latencyClass(t.latencyMs)}">${t.latencyMs} ms</td>
+    </tr>`;
+  }).join('');
+}
+
+async function fetchTraces() {
+  try {
+    const [tracesRes, statsRes] = await Promise.all([
+      fetch('/__tracelens/traces?limit=500').then(r=>r.json()),
+      fetch('/__tracelens/stats').then(r=>r.json()).catch(()=>null)
+    ]);
+    allTraces = tracesRes.traces || [];
+    document.getElementById('target').textContent = 'target: ' + (tracesRes.target || '—');
+    document.getElementById('storage').textContent = 'storage: ' + (statsRes?.storage || 'jsonl');
+    document.getElementById('count').textContent = allTraces.length + ' traces';
+    // stats
+    if (statsRes) {
+      document.getElementById('s-count').textContent = statsRes.count;
+      document.getElementById('s-avg').textContent = statsRes.avgMs + ' ms';
+      document.getElementById('s-p95').textContent = statsRes.p95Ms + ' ms';
+      const b = statsRes.byStatus || {};
+      document.getElementById('s-codes').textContent = `${b['2xx']||0} / ${b['4xx']||0} / ${b['5xx']||0}`;
+    }
+    render();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty" style="color:#f87171">Failed to fetch traces: ${e.message}</td></tr>`;
+  }
+}
+
+document.getElementById('refresh').addEventListener('click', fetchTraces);
+document.getElementById('clearBtn').addEventListener('click', () => { filter.value=''; methodFilter.value=''; statusFilter.value=''; render(); });
+filter.addEventListener('input', render);
+methodFilter.addEventListener('change', render);
+statusFilter.addEventListener('change', render);
+document.getElementById('liveBtn').addEventListener('click', () => {
+  live = !live;
+  document.getElementById('liveBtn').textContent = 'Live: ' + (live ? 'ON' : 'OFF');
+  document.getElementById('autoLabel').textContent = live ? 'on (2s)' : 'off';
+  if (live) timer = setInterval(fetchTraces, 2000);
+  else clearInterval(timer);
+});
+
+fetchTraces();
+</script>
+</body>
+</html>

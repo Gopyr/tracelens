@@ -1,0 +1,26 @@
+{
+  "name": "tracelens",
+  "version": "0.1.0",
+  "description": "Local observability proxy — capture HTTP latency, status and traces to SQLite/JSON. Local-only, single-process.",
+  "type": "module",
+  "bin": {
+    "tracelens": "src/proxy.mjs"
+  },
+  "scripts": {
+    "start": "node src/proxy.mjs",
+    "dev": "node --watch src/proxy.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "keywords": ["observability", "proxy", "tracing", "local", "http", "sqlite"],
+  "author": "Gopyr <gopyr@users.noreply.github.com>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Gopyr/tracelens.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
