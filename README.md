@@ -1,8 +1,12 @@
 # TraceLens
 
-Local observability proxy — capture HTTP latency, status and traces to SQLite/JSONL. Single-process, local-only.
+Local observability proxy that captures HTTP latency, status and traces to SQLite/JSONL. Single-process, local-only.
 
 > **Honest scope:** TraceLens is a tiny dev proxy for one machine. It is not distributed tracing. No sampling, no tail-sampling, no trace propagation (W3C/B3), no clustering, no retention policies beyond a capped ring buffer, no authentication, no TLS. If you need Jaeger/Tempo/OTel, use those.
+
+### Live Viewer
+
+![TraceLens viewer showing 33 traces with status breakdown, latency stats, and filterable table](assets/viewer.png)
 
 ## What it does
 
@@ -14,7 +18,7 @@ Local observability proxy — capture HTTP latency, status and traces to SQLite/
 ## Quick start
 
 ```bash
-npm install   # no dependencies — uses Node built-ins
+npm install   # no dependencies; uses Node built-ins
 TARGET=http://localhost:3000 npm start
 # or
 PORT=3888 TARGET=http://localhost:3000 node src/proxy.mjs
@@ -41,8 +45,8 @@ Query params: `limit` (max 1000), `method`, `status` (exact or prefix via viewer
 
 ## Storage
 
-- `data/traces.jsonl` — append-only JSON lines, survives restarts, capped in-memory to `MAX_TRACES` (default 5000, last 1000 reloaded on boot).
-- `data/traces.db` — SQLite via `node:sqlite` (`DatabaseSync`). Falls back to JSONL-only on Node <22.5 or if `node:sqlite` unavailable.
+- `data/traces.jsonl`: append-only JSON lines, survives restarts, capped in-memory to `MAX_TRACES` (default 5000, last 1000 reloaded on boot).
+- `data/traces.db`: SQLite via `node:sqlite` (`DatabaseSync`). Falls back to JSONL-only on Node <22.5 or if `node:sqlite` unavailable.
 
 No log rotation beyond ring-buffer pruning. Inspect raw: `cat data/traces.jsonl | jq`.
 
@@ -57,16 +61,16 @@ No log rotation beyond ring-buffer pruning. Inspect raw: `cat data/traces.jsonl 
 
 ## Limitations (read before using)
 
-- **Local only** — single process, no auth, no TLS, binds to `0.0.0.0` naive.
-- **No distributed tracing** — no context propagation, no span hierarchy, no correlation IDs.
-- **Best-effort proxy** — hop-by-hop headers are not fully stripped; WebSocket/SSE not supported; large bodies stream but are not inspected.
-- **No guarantees** — ring buffer drops oldest traces when full; JSONL grows until manually cleared.
-- **Not production-hardened** — no rate limiting, no PII scrubbing. Use only for local dev.
+- **Local only**: single process, no auth, no TLS, binds to `0.0.0.0` naive.
+- **No distributed tracing**: no context propagation, no span hierarchy, no correlation IDs.
+- **Best-effort proxy**: hop-by-hop headers are not fully stripped; WebSocket/SSE not supported; large bodies stream but are not inspected.
+- **No guarantees**: ring buffer drops oldest traces when full; JSONL grows until manually cleared.
+- **Not production-hardened**: no rate limiting, no PII scrubbing. Use only for local dev.
 
 ## Viewer
 
-Static HTML at `src/viewer/index.html` — no build step, no framework. Filter by path/method/status, live refresh (2s polling), avg/p95 stats.
+Static HTML at `src/viewer/index.html`: no build step, no framework. Filter by path/method/status, live refresh (2s polling), avg/p95 stats.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT: see [LICENSE](LICENSE).
