@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * TraceLens — local observability proxy
- * Captures latency, status, method, path, timestamp for every proxied request.
+ * TraceLens — local observability proxy + passive security inspector.
+ * Captures latency, status, method, path, timestamp, and passive security issues.
  * Storage: SQLite (node:sqlite if available) + JSONL fallback. No distributed tracing.
  */
 
@@ -53,6 +53,7 @@ try {
 }
 
 const memoryTraces = [];
+const securityFindings = [];
 let jsonlCount = 0;
 
 // load existing jsonl into memory (tail)
@@ -66,11 +67,58 @@ try {
   }
 } catch {}
 
+function inspectSecurity(trace) {
+  const issues = [];
+  const resHeaders = trace.responseHeaders || {};
+  const pathStr = trace.path || '';
+
+  // 1. Sensitive Params in Query
+  if (pathStr.includes('password=') || pathStr.includes('token=') || pathStr.includes('secret=') || pathStr.includes('key=')) {
+    issues.push({ severity: 'medium', type: 'SENSITIVE_PARAM_IN_URL', message: 'Credentials/Token exposed in URL query parameters.' });
+  }
+
+  // 2. Server Technology Leakage
+  if (resHeaders['server'] && (resHeaders['server'].includes('/') || resHeaders['server'].includes('('))) {
+    issues.push({ severity: 'low', type: 'SERVER_HEADER_LEAK', message: `Server version disclosed: ${resHeaders['server']}` });
+  }
+  if (resHeaders['x-powered-by']) {
+    issues.push({ severity: 'low', type: 'X_POWERED_BY_LEAK', message: `Tech stack disclosed: ${resHeaders['x-powered-by']}` });
+  }
+
+  // 3. Missing Security Headers
+  if (trace.status === 200) {
+    if (!resHeaders['x-content-type-options']) {
+      issues.push({ severity: 'low', type: 'MISSING_MIME_HEADER', message: 'Missing X-Content-Type-Options: nosniff header.' });
+    }
+    if (!resHeaders['content-security-policy']) {
+      issues.push({ severity: 'medium', type: 'MISSING_CSP', message: 'Missing Content-Security-Policy (CSP) header.' });
+    }
+  }
+
+  // 4. Insecure Cookies
+  if (resHeaders['set-cookie']) {
+    const cookies = Array.isArray(resHeaders['set-cookie']) ? resHeaders['set-cookie'] : [resHeaders['set-cookie']];
+    for (const c of cookies) {
+      if (!c.toLowerCase().includes('httponly')) {
+        issues.push({ severity: 'medium', type: 'COOKIE_NO_HTTPONLY', message: `Cookie missing HttpOnly flag: ${c.split('=')[0]}` });
+      }
+    }
+  }
+
+  if (issues.length > 0) {
+    trace.issues = issues;
+    for (const iss of issues) {
+      securityFindings.push({ ...iss, timestamp: trace.timestamp, path: trace.path, method: trace.method });
+    }
+    if (securityFindings.length > 500) securityFindings.splice(0, securityFindings.length - 500);
+  }
+}
+
 function persist(trace) {
+  inspectSecurity(trace);
   memoryTraces.push(trace);
   if (memoryTraces.length > MAX_TRACES) memoryTraces.splice(0, memoryTraces.length - MAX_TRACES);
 
-  // jsonl append
   try {
     fs.appendFileSync(JSONL_PATH, JSON.stringify(trace) + '\n');
     jsonlCount++;
@@ -78,12 +126,10 @@ function persist(trace) {
     console.error('[tracelens] jsonl write failed', e.message);
   }
 
-  // sqlite
   if (useSqlite && db) {
     try {
       const stmt = db.prepare(`INSERT INTO traces (timestamp, method, path, status, latency_ms, target, request_headers, response_headers, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
       stmt.run(trace.timestamp, trace.method, trace.path, trace.status, trace.latencyMs, trace.target, JSON.stringify(trace.requestHeaders || {}), JSON.stringify(trace.responseHeaders || {}), trace.error || null);
-      // prune old rows
       const count = db.prepare('SELECT COUNT(*) as c FROM traces').get().c;
       if (count > MAX_TRACES) {
         db.prepare(`DELETE FROM traces WHERE id IN (SELECT id FROM traces ORDER BY id ASC LIMIT ?)`).run(count - MAX_TRACES);
@@ -96,7 +142,6 @@ function persist(trace) {
 
 function getTraces({ limit = 100, method, status } = {}) {
   let traces = memoryTraces;
-  // prefer sqlite if available and memory is empty or stale — use memory as source of truth for speed
   if (method) traces = traces.filter(t => t.method === method.toUpperCase());
   if (status) traces = traces.filter(t => String(t.status) === String(status));
   return traces.slice(-limit).reverse();
@@ -107,7 +152,6 @@ function proxyRequest(clientReq, clientRes) {
   const start = performance.now();
   const timestamp = new Date().toISOString();
 
-  // viewer / api routes — not proxied
   const url = new URL(clientReq.url, `http://${clientReq.headers.host}`);
   if (url.pathname.startsWith('/__tracelens')) {
     handleInternal(url, clientReq, clientRes);
@@ -128,7 +172,6 @@ function proxyRequest(clientReq, clientRes) {
   const proxyReq = lib.request(proxyOpts, (proxyRes) => {
     const latencyMs = Math.round((performance.now() - start) * 100) / 100;
 
-    // capture trace
     const trace = {
       timestamp,
       method: clientReq.method,
@@ -169,7 +212,6 @@ function proxyRequest(clientReq, clientRes) {
 }
 
 function handleInternal(url, req, res) {
-  // CORS for viewer
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   if (url.pathname === '/__tracelens/traces' || url.pathname === '/__tracelens/api/traces') {
@@ -179,6 +221,12 @@ function handleInternal(url, req, res) {
     const traces = getTraces({ limit: Math.min(limit, 1000), method, status });
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ target: TARGET, count: traces.length, total: memoryTraces.length, traces }, null, 2));
+    return;
+  }
+
+  if (url.pathname === '/__tracelens/security') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ count: securityFindings.length, findings: securityFindings }, null, 2));
     return;
   }
 
@@ -193,7 +241,7 @@ function handleInternal(url, req, res) {
     const byStatus = {};
     for (const t of traces) { const k = String(t.status)[0] + 'xx'; byStatus[k] = (byStatus[k]||0)+1; }
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ count: traces.length, avgMs: Math.round(avg*100)/100, p95Ms: p95, byStatus, target: TARGET, storage: useSqlite ? 'sqlite+jsonl' : 'jsonl', jsonlPath: JSONL_PATH }, null, 2));
+    res.end(JSON.stringify({ count: traces.length, avgMs: Math.round(avg*100)/100, p95Ms: p95, securityIssuesCount: securityFindings.length, byStatus, target: TARGET, storage: useSqlite ? 'sqlite+jsonl' : 'jsonl' }, null, 2));
     return;
   }
 
@@ -203,7 +251,6 @@ function handleInternal(url, req, res) {
     return;
   }
 
-  // serve viewer
   const viewerFile = url.pathname === '/__tracelens' || url.pathname === '/__tracelens/' ? 'index.html' : url.pathname.replace('/__tracelens/', '');
   const safeFile = path.normalize(viewerFile).replace(/^(\.\.[\/\\])+/, '');
   const viewerPath = path.join(__dirname, 'viewer', safeFile);
@@ -215,7 +262,6 @@ function handleInternal(url, req, res) {
     return;
   }
 
-  // fallback: redirect to viewer
   if (url.pathname === '/__tracelens' || url.pathname === '/__tracelens/') {
     res.writeHead(200, { 'content-type': 'text/html' });
     res.end(fs.readFileSync(path.join(__dirname, 'viewer', 'index.html'), 'utf8'));
@@ -226,19 +272,18 @@ function handleInternal(url, req, res) {
   res.end(JSON.stringify({ error: 'Not found', path: url.pathname }));
 }
 
-// ---- server ----
 const server = http.createServer(proxyRequest);
 
 server.listen(PROXY_PORT, () => {
   console.log(`
-  TraceLens — local observability proxy
-  ─────────────────────────────────────
-  Proxy:   http://localhost:${PROXY_PORT}  →  ${TARGET}
-  Viewer:  http://localhost:${PROXY_PORT}/__tracelens
-  API:     http://localhost:${PROXY_PORT}/__tracelens/traces
-  Stats:   http://localhost:${PROXY_PORT}/__tracelens/stats
-  Health:  http://localhost:${PROXY_PORT}/__tracelens/health
-  Storage: ${useSqlite ? `sqlite (${SQLITE_PATH}) + jsonl` : `jsonl (${JSONL_PATH})`}
+  TraceLens — local observability proxy + passive inspector
+  ──────────────────────────────────────────────────────────
+  Proxy:    http://localhost:${PROXY_PORT}  →  ${TARGET}
+  Viewer:   http://localhost:${PROXY_PORT}/__tracelens
+  API:      http://localhost:${PROXY_PORT}/__tracelens/traces
+  Security: http://localhost:${PROXY_PORT}/__tracelens/security
+  Stats:    http://localhost:${PROXY_PORT}/__tracelens/stats
+  Storage:  ${useSqlite ? `sqlite (${SQLITE_PATH}) + jsonl` : `jsonl (${JSONL_PATH})`}
   `);
 });
 
