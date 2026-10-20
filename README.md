@@ -48,3 +48,4 @@ Open viewer and security findings:
 ## License
 
 [MIT License](LICENSE)
+- 2026-10-20 perf: batch sequential awaits
