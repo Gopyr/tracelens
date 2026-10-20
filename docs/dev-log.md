@@ -1,1 +1,2 @@
 - 2026-10-20 build: update toolchain config
+- 2026-10-20 docs: add usage note
