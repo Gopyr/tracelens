@@ -49,5 +49,3 @@ Buka viewer dan hasil pemeriksaan keamanan:
 
 [MIT License](LICENSE)
 
-Catatan perubahan:
-- 2026-10-20 perf: batch sequential awaits
