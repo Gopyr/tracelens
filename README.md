@@ -1,51 +1,53 @@
 # TraceLens
 
-Local observability proxy and passive security inspector that captures HTTP latency, status, headers, and security issues to SQLite/JSONL. Single-process, local-only.
+Proxy observability lokal yang sekaligus menginspeksi keamanan secara pasif. Ia merekam latency, status, dan header HTTP, lalu menyimpan hasilnya ke SQLite/JSONL. Satu proses, jalan lokal saja.
 
 ## Scope
 
-TraceLens is a developer proxy for single-machine API monitoring and passive traffic security inspection. It records request traces, measures latency, and flags security issues like unencrypted cookies, missing security headers, or leaked API tokens in URLs.
+TraceLens adalah proxy developer untuk monitoring API satu mesin dan inspeksi keamanan trafik secara pasif. Ia merekam trace tiap request, mengukur latency, dan menandai masalah keamanan seperti cookie tanpa enkripsi, header keamanan yang hilang, atau API token yang bocor di URL.
 
 ![TraceLens viewer](assets/viewer.png)
 
-## What It Does
+## Yang Dilakukan
 
-- Proxies any HTTP target (`TARGET=http://localhost:3000`) on `http://localhost:3888`
-- Records per-request: method, path, status, latency (ms), timestamp, target, headers, error
-- **Passive Security Inspector**: automatically detects missing CSP/MIME headers, insecure cookies, and credential leaks in query params
-- Stores to `data/traces.jsonl` (always) and `data/traces.db` via `node:sqlite` when available (Node >=22.5)
-- Serves a minimal viewer and JSON API at `/__tracelens`
+- Memproksi target HTTP apa pun (`TARGET=http://localhost:3000`) di `http://localhost:3888`
+- Merekam per request: method, path, status, latency (ms), timestamp, target, headers, error
+- Passive Security Inspector: mendeteksi header CSP/MIME yang hilang, cookie tidak aman, dan kredensial di query params
+- Menyimpan ke `data/traces.jsonl` (selalu) dan `data/traces.db` via `node:sqlite` bila tersedia (Node >=22.5)
+- Menyediakan viewer minimal dan JSON API di `/__tracelens`
 
-## Quick Start
+## Mulai Cepat
 
 ```bash
 npm install
 TARGET=http://localhost:3000 npm start
-# or
+# atau
 PORT=3888 TARGET=http://localhost:3000 node src/proxy.mjs
 ```
 
-Send traffic through the proxy:
+Kirim trafik lewat proxy:
 
 ```bash
 curl http://localhost:3888/api/hello
 ```
 
-Open viewer and security findings:
+Buka viewer dan hasil pemeriksaan keamanan:
 - Viewer: http://localhost:3888/__tracelens
-- Security Report: http://localhost:3888/__tracelens/security
+- Laporan keamanan: http://localhost:3888/__tracelens/security
 
 ## API Endpoints
 
-| Endpoint | Description |
+| Endpoint | Keterangan |
 |---|---|
 | `GET /__tracelens` | Viewer HTML |
-| `GET /__tracelens/traces` | JSON traces list |
-| `GET /__tracelens/security` | Passive traffic security findings |
-| `GET /__tracelens/stats` | Count, avg/p95 latency, security findings count |
+| `GET /__tracelens/traces` | Daftar traces JSON |
+| `GET /__tracelens/security` | Temuan keamanan trafik pasif |
+| `GET /__tracelens/stats` | Jumlah request, latency avg/p95, jumlah temuan keamanan |
 | `GET /__tracelens/health` | Health check |
 
-## License
+## Lisensi
 
 [MIT License](LICENSE)
+
+Catatan perubahan:
 - 2026-10-20 perf: batch sequential awaits
