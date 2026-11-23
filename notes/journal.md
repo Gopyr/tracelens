@@ -1,0 +1,1 @@
+- 2026-11-23 docs: clarify setup steps
